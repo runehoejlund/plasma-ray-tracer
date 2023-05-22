@@ -1,3 +1,18 @@
+'''
+This file contains a minimal example of ray tracing
+for the airy problem using geometrical optics.
+The ray tracing is parallelised and therefore quite fast.
+However, after ray tracing we need to do an interpolation,
+which takes a long time if we increase the number of grid
+points.
+
+Currently it takes ~25 s for a 1000 x 10 x 10 (t, y0, z0) grid.
+Increasing the grid to 1000 x 50 x 50 points increased the interpolation
+time to about 30 min! There might be ways of improving this,
+but I haven't explored those. Ideas could be to use another
+interpolation library or fitting the discrete datapoints
+with a neural network or another simpler regression model.
+'''
 # %% Setup
 from os import path, chdir
 chdir(path.dirname(path.abspath(__file__)))
