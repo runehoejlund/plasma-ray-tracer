@@ -15,6 +15,9 @@ from scipy.signal import find_peaks
 from trace_ray import trace_ray, get_t
 from torch_helper import to_torch, to_torch_3D, torch_func, inner_product, angle
 
+import multiprocessing as mp
+import time
+
 rcParams.update(mpl.rcParamsDefault)
 rcParams.update({
     "text.usetex": True,
@@ -68,6 +71,7 @@ first_peak_ind = find_peaks(E_ex)[0][0]
 x0  = x[first_peak_ind]
 phi0 = E_ex[first_peak_ind]
 
+# Note setting a finer grid increases the interpolation time significantly!
 n2, n3 = 10, 10
 nt = 1000
 y = np.linspace(0, 1, n2)
@@ -76,74 +80,101 @@ z = np.linspace(0, 10, n3)
 # %% Ray Tracing
 rs = np.zeros((nt, n2, n3, 3))
 ks = np.zeros((nt, n2, n3, 3))
-
 omega0 = 1.0
+
 # ray tracing stops when it hits boundary, so we don't know
 # exact number of timesteps before ray tracing has completed.
-min_nt = nt
-for i, y0 in enumerate(y):
-    for j, z0 in enumerate(z):
-        tau_ind = (i, j)
-        sol = trace_ray(r0 = np.array([x0, y0, z0]), k0=np.array([np.sqrt(-x0), 0, 0]), omega0=omega0, tmin=0, tmax=8, D=D, r_min=np.array([x0, 0, 0]), tsteps=nt)
-        sol_nt = len(sol.t)
-        rs[:sol_nt, i, j, :] = sol.y[:3].T
-        ks[:sol_nt, i, j, :] = sol.y[3:].T
-        min_nt = np.min((sol_nt, min_nt))
+t = np.zeros(nt)
+sol_nts = []
 
-# Clip all rays to the same number of time steps
-nt = min_nt
-t = sol.t[:min_nt]
-rs = rs[:min_nt, :, :, :]
-ks = ks[:min_nt, :, :, :]
+results = []
 
-# %% Field Construction
-J = np.linalg.det(fd.grad(rs, t, y, z))
-phi = phi0*np.real(np.emath.sqrt(J[0, ...]/J))
-gradt_r = fd.grad(rs, t)
-theta0 = 0
-theta = theta0 + cumulative_trapezoid(np_inner_product(ks, gradt_r), t, initial=0, axis=0)
+def trace_ray_ij(i, j):
+    y0, z0 = y[i], z[j]
+    sol = trace_ray(r0 = np.array([x0, y0, z0]), k0=np.array([np.sqrt(-x0), 0, 0]), omega0=omega0, tmin=0, tmax=8, D=D, r_min=np.array([x0, 0, 0]), tsteps=nt)
+    return (i, j, sol.t, sol.y)
 
-branch_masks = get_masks_of_const_sgn(J)
-branches = [LinearNDInterpolator(rs[mask], phi[mask]*np.cos(theta[mask])) for mask in branch_masks]
+def collect_result(result):
+    global results
+    results.append(result)
 
-def interp_field_r(r):
-    return sum(f(r) for f in branches)
+if __name__ == '__main__':
+    tic = time.process_time()
+    with mp.Pool(processes=mp.cpu_count()) as p:
+        # print(p.map(test, range(10)))
+        for i, y0 in enumerate(y):
+            for j, z0 in enumerate(z):
+                p.apply_async(trace_ray_ij, args=(i, j), callback=collect_result)
+        p.close()
+        p.join()
+    
+    for (i, j, sol_t, sol_y) in results:
+        sol_nt = len(sol_t)
+        t = sol_t
+        sol_nts.append(sol_nt)
+        rs[:sol_nt, i, j, :] = sol_y[:3].T
+        ks[:sol_nt, i, j, :] = sol_y[3:].T
+    
+    # # Clip all rays to the same number of time steps
+    nt = np.min(sol_nts)
+    t = t[:nt]
+    rs = rs[:nt, :, :, :]
+    ks = ks[:nt, :, :, :]
+    
+    print('finished ray tracing in: ', round(time.process_time() - tic, 4), ' s')
+    
+    tic = time.process_time()
+    # %% Field Construction
+    J = np.linalg.det(fd.grad(rs, t, y, z))
+    phi = phi0*np.real(np.emath.sqrt(J[0, ...]/J))
+    gradt_r = fd.grad(rs, t)
+    theta0 = 0
+    theta = theta0 + cumulative_trapezoid(np_inner_product(ks, gradt_r), t, initial=0, axis=0)
 
-def interp_field(x, y, z):
-    r = np.stack([x, y, z], axis=-1)
-    return interp_field_r(r)
+    branch_masks = get_masks_of_const_sgn(J)
+    branches = [LinearNDInterpolator(rs[mask], phi[mask]*np.cos(theta[mask])) for mask in branch_masks]
 
-xi = np.linspace(np.min(rs[..., 0]), np.max(rs[..., 0])+0.1, 200)
-yi = np.linspace(np.min(rs[..., 1]), np.max(rs[..., 1]), 200)
-zi = np.linspace(np.min(rs[..., 2]), np.max(rs[..., 2]), 200)
+    def interp_field_r(r):
+        return sum(f(r) for f in branches)
 
-E_GO = interp_field(xi, np.zeros_like(xi), np.zeros_like(xi))
+    def interp_field(x, y, z):
+        r = np.stack([x, y, z], axis=-1)
+        return interp_field_r(r)
 
-# %% Plot Results
+    xi = np.linspace(np.min(rs[..., 0]), np.max(rs[..., 0])+0.1, 200)
+    yi = np.linspace(np.min(rs[..., 1]), np.max(rs[..., 1]), 200)
+    zi = np.linspace(np.min(rs[..., 2]), np.max(rs[..., 2]), 200)
 
-# Plot Exact and GO Solution in 1D
-plt.figure(figsize=(5,4))
-plt.plot(x, E_ex, 'k-', label='Exact $E(x) = \mathrm{Ai}(x)$')
-plt.plot(xi, E_GO, '--', color='tab:blue', label='Numerical GO $E(x)$')
-plt.ylim(-1, 1)
-plt.xlabel('$x$')
-plt.ylabel('$E$ [arb. u.]')
-plt.grid()
-plt.legend()
-plt.tight_layout()
-plt.savefig('./plots/GO_airy_field.png')
-plt.savefig('./plots/GO_airy_field.pdf')
-plt.show()
+    E_GO = interp_field(xi, np.zeros_like(xi), np.zeros_like(xi))
+    print('reconstructed interpolation in 1D in: ', round(time.process_time() - tic, 4), ' s')
 
-# Plot GO Solution in 2D
-X, Y = np.meshgrid(x, y, indexing='ij')
-E_XY = interp_field(X, Y, np.zeros_like(X))
+    # %% Plot Results
 
-plt.figure(figsize=(6,4))
-plt.contourf(X, Y, E_XY, cmap='RdBu_r', vmax=0.8, levels=80)
-plt.colorbar(label='$E$ [arb. u.]')
-plt.xlabel(r'$x$')
-plt.ylabel(r'$y$')
-plt.tight_layout()
-plt.savefig('./plots/GO_airy_field_2d.png')
-plt.show()
+    # Plot Exact and GO Solution in 1D
+    plt.figure(figsize=(5,4))
+    plt.plot(x, E_ex, 'k-', label='Exact $E(x) = \mathrm{Ai}(x)$')
+    plt.plot(xi, E_GO, '--', color='tab:blue', label='Numerical GO $E(x)$')
+    plt.ylim(-1, 1)
+    plt.xlabel('$x$')
+    plt.ylabel('$E$ [arb. u.]')
+    plt.grid()
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('./plots/GO_airy_field.png')
+    plt.savefig('./plots/GO_airy_field.pdf')
+    plt.show()
+
+    tic = time.process_time()
+    # Plot GO Solution in 2D
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    E_XY = interp_field(X, Y, np.zeros_like(X))
+    print('reconstructed interpolation in 2D in: ', round(time.process_time() - tic, 4), ' s')
+
+    plt.figure(figsize=(6,4))
+    plt.contourf(X, Y, E_XY, cmap='RdBu_r', vmax=0.8, levels=80)
+    plt.colorbar(label='$E$ [arb. u.]')
+    plt.xlabel(r'$x$')
+    plt.ylabel(r'$y$')
+    plt.tight_layout()
+    plt.savefig('./plots/GO_airy_field_2d.png')
+    plt.show()
