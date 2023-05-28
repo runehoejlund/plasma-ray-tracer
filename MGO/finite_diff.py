@@ -4,8 +4,31 @@ differentiate any function defined on a grid through
 finite differences. Note, the `grad` function allows for arbitrary
 dimensions in the input and output, i.e. f : R^n -> R^m.
 '''
-
 import numpy as np
+
+def _dtake(a, index, axis):
+    '''numpy take a single index but keep dimensions.'''
+    dims = [1 if i == axis else s for i, s in enumerate(a.shape)]
+    return np.take(a=a, indices=index, axis=axis).reshape(dims)
+    
+def _take_many(f, indeces, axis):
+    return (*[_dtake(f, i, axis) for i in indeces], )
+
+def pad_left(f, axis):
+    ''' makes left padding for calculating three-point
+    difference estimate for the beginning point.
+    '''
+    f0, f1, f2 = _take_many(f, [0, 1, 2], axis)
+    f_pad = np.concatenate([3*(f0 - f1) + f2, f], axis=axis)
+    return f_pad
+
+def pad_right(f, axis):
+    ''' makes right padding for calculating three-point
+    difference estimate for the end point.
+    '''
+    fm1, fm2, fm3 = _take_many(f, [-1, -2, -3], axis)
+    f_pad = np.concatenate([f, 3*(fm1 - fm2) + fm3], axis=axis)
+    return f_pad
 
 def grad(f, *args, axes=None):
     '''
@@ -30,29 +53,39 @@ def grad(f, *args, axes=None):
     to only get ∂f_1/∂x_2 and ∂f_2/∂x_2 ... and so on.
     '''
     _f = f.squeeze()
-    
-    def dtake(a, index, axis):
-        '''numpy take a single index but keep dimensions.'''
-        dims = [1 if i == axis else s for i, s in enumerate(a.shape)]
-        return np.take(a=a, indices=index, axis=axis).reshape(dims)
-    
-    def take_many(f, indeces, axis):
-        return (*[dtake(f, i, axis) for i in indeces], )
-    
-    grad_f = np.zeros((*_f.shape, len(args)))
+
+    grad_f = np.zeros((*_f.shape, len(args)), dtype=_f.dtype)
     if axes is None:
         axes = np.arange(len(args))
     
     for i, (axis, xi) in enumerate(zip(axes, args)):
+        # Handle edge cases
+        if len(xi) == 1:
+            # If we only have 1 point, assume function is constant.
+            grad_f[..., i] = 0
+            continue
+        
+        h = np.diff(xi[:2])[0]
+        if h == 0:
+            # If h is close to 0 either set gradient to 0 or np.nan
+            df = np.diff(f, axis=axis)
+            grad_f[..., i] = 0
+            continue
+        
+        if len(xi) == 2:
+            # If we only have 2 points use two-point difference
+            df = np.diff(f, axis=axis)
+            grad_f[..., i] = df/h
+            continue
+        
+        # Main case
         # make padding for calculating three-point difference
         # estimate for the beginning and end points.
-        f0, f1, f2, fm1, fm2, fm3 = take_many(_f, [0, 1, 2, -1, -2, -3], axis)
-        f_pad = np.concatenate([3*(f0 - f1) + f2, _f, 3*(fm1 - fm2) + fm3], axis=axis)
+        f_pad = pad_right(pad_left(f, axis=axis), axis=axis)
         
         # The derivative is then calculated
         # as the central difference for all points.
         df_pad = np.diff(f_pad, axis=axis)
-        h = np.diff(xi[:2])[0]
         grad_f_i = (np.take(df_pad, np.arange(1, df_pad.shape[axis]), axis=axis)
          + np.take(df_pad, np.arange(0, df_pad.shape[axis] - 1), axis=axis))/(2*h)
         grad_f[..., i] = grad_f_i
