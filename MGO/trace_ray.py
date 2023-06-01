@@ -24,6 +24,27 @@ def get_boundary_events(r_min, r_max):
     
     return events
 
+def get_boundary_events_1D(x_min, x_max):
+    events = []
+
+    if (x_min is not None):
+        def hit_min(t, q):
+            tol = 1e-4
+            return np.min(q[0] - (x_min - tol))
+        hit_min.terminal = True
+        hit_min.direction = -1
+        events.append(hit_min)
+    
+    if (x_max is not None):
+        def hit_max(t, q):
+            tol = 1e-4
+            return np.min((x_max + tol) - q[0])
+        hit_max.terminal = True
+        hit_max.direction = -1
+        events.append(hit_max)
+    
+    return events
+
 def trace_ray(r0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, r_min=None, r_max=None, tsteps=1000):
     q0 = np.hstack((r0,k0))
     
@@ -44,6 +65,29 @@ def trace_ray(r0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, r_min=None, r
         return torch.hstack((RHS_r, RHS_k)).detach().numpy()
 
     sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(r_min, r_max), rtol=rtol, atol = (1e-3)*rtol)
+    return sol
+
+def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None, x_max=None, tsteps=1000):
+    q0 = np.hstack((x0, k0))
+    
+    # RHS of ray-tracer ODE
+    def f(t, q):
+        x_np, k_np = q
+        omega = torch.tensor(omega0, requires_grad=True)
+
+        x = torch.tensor(x_np, requires_grad=True)
+        k = torch.tensor(k_np, requires_grad=True)
+
+        Di = D(x, k, omega, **D_args)
+        Di.backward()
+        grad_x = x.grad
+        grad_k = k.grad
+        RHS_x = - grad_k
+        RHS_k = grad_x
+        
+        return torch.hstack((RHS_x, RHS_k)).detach().numpy()
+
+    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol)
     return sol
 
 def get_t(sol, omega, D, D_args = {}):
