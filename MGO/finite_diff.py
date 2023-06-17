@@ -30,7 +30,7 @@ def pad_right(f, axis):
     f_pad = np.concatenate([f, 3*(fm1 - fm2) + fm3], axis=axis)
     return f_pad
 
-def grad(f, *args, axes=None):
+def grad(f, *args, axes=None, cropped_axes=[]):
     '''
     Returns finite difference derivative of N-D array, f, with respect to arguments, *args.
 
@@ -53,10 +53,12 @@ def grad(f, *args, axes=None):
     to only get ∂f_1/∂x_2 and ∂f_2/∂x_2 ... and so on.
     '''
     _f = f.squeeze()
-
-    grad_f = np.zeros((*_f.shape, len(args)), dtype=_f.dtype)
     if axes is None:
         axes = np.arange(len(args))
+    
+    assert set(cropped_axes) <= set(axes), 'Error: Axes to crop must be contained in axes to differentiate along. Received `cropped_axes` = ' + str(cropped_axes) + ', but `axes` = ' + str(axes)
+    shape = (s - 2 if i in cropped_axes else s for i, s in enumerate(_f.shape))
+    grad_f = np.zeros((*shape, len(args)), dtype=_f.dtype)
     
     for i, (axis, xi) in enumerate(zip(axes, args)):
         # Handle edge cases
@@ -67,8 +69,7 @@ def grad(f, *args, axes=None):
         
         h = np.diff(xi[:2])[0]
         if h == 0:
-            # If h is close to 0 either set gradient to 0 or np.nan
-            df = np.diff(f, axis=axis)
+            # If h is close to 0, set gradient to 0
             grad_f[..., i] = 0
             continue
         
@@ -79,9 +80,14 @@ def grad(f, *args, axes=None):
             continue
         
         # Main case
-        # make padding for calculating three-point difference
-        # estimate for the beginning and end points.
-        f_pad = pad_right(pad_left(f, axis=axis), axis=axis)
+        if axis not in cropped_axes:
+            # make padding for calculating three-point difference
+            # estimate for the beginning and end points.
+            f_pad = pad_right(pad_left(f, axis=axis), axis=axis)
+        else:
+            f_pad = f
+        slice_pad = np.s_[[slice(1, -1) if (j != axis and j in cropped_axes) else slice(None) for j in range(len(f.shape))]]
+        f_pad = f_pad[(*slice_pad, )]
         
         # The derivative is then calculated
         # as the central difference for all points.
