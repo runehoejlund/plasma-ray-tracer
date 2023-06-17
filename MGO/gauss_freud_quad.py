@@ -1,4 +1,5 @@
 import numpy as np
+import itertools
 
 def get_nodes_and_weights(n):
     '''Returns nodes and weights from Freud polynomials for evaluating gaussian quadrature.'''
@@ -28,7 +29,21 @@ def get_nodes_and_weights(n):
     ]
     return np.array(nodes[n-1]), np.array(weights[n-1])
 
-def integrate_gauss_freud_quad(f, n):
+# def integrate_gauss_freud_quad(f, n):
+#     '''Integrate f(x) from 0 to ∞ using Gauss Freud Quadrature of order n (currently max 10)'''
+#     x_j, w_j = get_nodes_and_weights(n)
+#     return np.dot(w_j,  np.exp(x_j**2)*f(x_j))
+
+def integrate_gauss_freud_quad(f, n, dims=1):
     '''Integrate f(x) from 0 to ∞ using Gauss Freud Quadrature of order n (currently max 10)'''
-    x_j, w_j = get_nodes_and_weights(n)
-    return np.dot(w_j,  np.exp(x_j**2)*f(x_j))
+    nodes, weights = get_nodes_and_weights(n)
+
+    prefactor = weights * np.exp(nodes**2)
+    F = np.zeros((n, )*dims, dtype=np.cdouble)
+    for args in itertools.product(*(range(n), )*dims):
+        F[args] = f(*(nodes[i] for i in args))
+    integral = F
+    for _ in range(dims):
+        integral = prefactor.T @ integral.T
+
+    return integral
