@@ -201,7 +201,7 @@ def check_rays(t, zs):
 def get_mgo_field(t, zs, phi0, i_save=[],
                   analytic_cont={'phase': {'fit_func': fit_polynomial, 'kwargs': {'deg': 3, 'exclude_degrees': [1]}},
                              'amplitude': {'fit_func': fit_rational_func, 'kwargs': {'L': 2, 'M': 1, 'optimize': False}}}):
-    '''Returns branch_masks, ray_field
+    '''Returns branch_masks, ray_field, info
     '''
     check_rays(t, zs)
     nt = len(t)
@@ -266,7 +266,11 @@ def get_mgo_field(t, zs, phi0, i_save=[],
             Upsilon[it] = integral(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho])
 
     ray_field = Nt*Upsilon
-    return branch_masks, ray_field, saved_results
+    info = {'saved_results': saved_results,
+            'Nt': Nt, 'Upsilon': Upsilon,
+            'S': S, 'Q': Q, 'R': R,
+            'ranks': ranks, 'A_zetas': A_zetas, 'A_rhos': A_rhos, 'Lambda_rhos': Lambda_rhos}
+    return branch_masks, ray_field, info
 
 def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field):
     branches = [interp1d(xs[mask].squeeze(), ray_field[mask], bounds_error=False, fill_value='extrapolate') for mask in branch_masks]
