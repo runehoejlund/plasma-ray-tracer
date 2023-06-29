@@ -73,20 +73,19 @@ def decompose_symplectic_trfm(S, gradtau_z, ND):
     A_rhos = (ut.transpose(eye_rhos) @ A_tilde @ eye_rhos) + eye_zetas
     Lambda_rhos = (ut.transpose(eye_rhos) @ Lambdas @ eye_rhos) + eye_zetas
 
-    return Q, R, ranks, A_zetas, A_rhos, Lambda_rhos
+    return A, B, Q, R, ranks, A_zetas, A_rhos, Lambda_rhos
 
 # %% Calculating Prefactor
 
-def get_prefactor(phi0, xs, ks, t, ranks, Lambda_rhos, A_zetas, R):
+def get_prefactor(phi0, xs, ks, t, B, ranks, Lambda_rhos, A_zetas, R):
     # Calculate prefactor
-    sigma_t = np.sign(np.linalg.det(Lambda_rhos))
     dt_x0 = fd.grad(xs[:3, ..., 0], t)[0, ...]
-    Nt = (phi0 * sigma_t * np.emath.sqrt(dt_x0)
+    Nt = (phi0 * np.emath.sqrt(dt_x0)
         * np.exp(1j * ( cumulative_trapezoid(ut.inner_product(fd.grad(xs.squeeze(), t)[..., np.newaxis], ks), t, initial=0, axis=0) ))
         ) / (
         np.emath.power((- 1j * 2*np.pi), (ranks/2)) * (
-            np.emath.sqrt(
-                np.linalg.det(Lambda_rhos) * np.linalg.det(A_zetas) * np.linalg.det(R)
+            ut.continuous_sqrt_of_reals(
+                np.sign(B.squeeze()) * np.linalg.det(Lambda_rhos) * np.linalg.det(A_zetas) * np.linalg.det(R)
             )
         )
     )
@@ -211,8 +210,8 @@ def get_mgo_field(t, zs, phi0, i_save=[],
 
     S = get_symplectic_tangent_trfm(zs, t, ND)
     gradtau_z = fd.grad(zs, t)
-    Q, R, ranks, A_zetas, A_rhos, Lambda_rhos = decompose_symplectic_trfm(S, gradtau_z, ND)
-    Nt = get_prefactor(phi0, xs, ks, t, ranks, Lambda_rhos, A_zetas, R)
+    A, B, Q, R, ranks, A_zetas, A_rhos, Lambda_rhos = decompose_symplectic_trfm(S, gradtau_z, ND)
+    Nt = get_prefactor(phi0, xs, ks, t, B, ranks, Lambda_rhos, A_zetas, R)
 
     saved_results = []
     Upsilon = np.zeros(nt, dtype=np.cdouble)

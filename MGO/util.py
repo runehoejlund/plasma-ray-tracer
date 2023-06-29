@@ -40,3 +40,19 @@ def get_masks_of_const_sgn(a, ND = 3):
         else:
             regions_remaining = False
     return masks
+
+# def continuous_angle(z, axis=0):
+#     z0 = np.take(z, 0, axis=axis)
+#     arg0 = np.angle(z0)
+#     return arg0 + np.cumsum(np.imag(np.diff(z, prepend=z0)/z))
+
+# def continuous_sqrt(z, axis=0):
+#     return np.sqrt(np.abs(z)) * np.exp(1j*continuous_angle(z)/2)
+
+def continuous_angle_of_reals(x, axis=0):
+    x0 = np.take(x, 0, axis=axis)
+    sgn = np.sign(x)
+    return np.angle(x) + 2*np.pi*np.cumsum(np.heaviside(np.diff(sgn, prepend=sgn[0]), 0))
+
+def continuous_sqrt_of_reals(x, axis=0):
+    return np.sqrt(np.abs(x)) * np.exp(1j*continuous_angle_of_reals(x)/2)
