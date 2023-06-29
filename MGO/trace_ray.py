@@ -2,6 +2,7 @@ import torch
 from torch.autograd import grad
 import numpy as np
 from scipy.integrate import solve_ivp, cumulative_trapezoid
+from warnings import warn
 
 def get_boundary_events(r_min, r_max):
     events = []
@@ -65,9 +66,11 @@ def trace_ray(r0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, r_min=None, r
         return torch.hstack((RHS_r, RHS_k)).detach().numpy()
 
     sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(r_min, r_max), rtol=rtol, atol = (1e-3)*rtol)
+    if not sol.success:
+        warn(sol.message)
     return sol
 
-def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None, x_max=None, tsteps=1000):
+def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None, x_max=None, tsteps=1000, solve_ivp_args={}, true_time=False):
     q0 = np.hstack((x0, k0))
     
     # RHS of ray-tracer ODE
@@ -85,9 +88,15 @@ def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None
         RHS_x = - grad_k
         RHS_k = grad_x
         
+        if true_time:
+            RHS_x = RHS_x/omega.grad
+            RHS_k = RHS_k/omega.grad
+        
         return torch.hstack((RHS_x, RHS_k)).detach().numpy()
 
-    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol)
+    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events_1D(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+    if not sol.success:
+        warn(sol.message)
     return sol
 
 def get_t(sol, omega, D, D_args = {}):
