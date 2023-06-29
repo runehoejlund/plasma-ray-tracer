@@ -79,10 +79,8 @@ def decompose_symplectic_trfm(S, gradtau_z, ND):
 
 def get_prefactor(phi0, xs, ks, t, B, ranks, Lambda_rhos, A_zetas, R):
     # Calculate prefactor
-    # sigma_t = np.sign(np.linalg.det(B))
-    sigma_t = 1
     dt_x0 = fd.grad(xs[:3, ..., 0], t)[0, ...]
-    Nt = (phi0 * sigma_t * np.emath.sqrt(dt_x0)
+    Nt = (phi0 * np.emath.sqrt(dt_x0)
         * np.exp(1j * ( cumulative_trapezoid(ut.inner_product(fd.grad(xs.squeeze(), t)[..., np.newaxis], ks), t, initial=0, axis=0) ))
         ) / (
         np.emath.power((- 1j * 2*np.pi), (ranks/2)) * (
@@ -253,7 +251,7 @@ def get_mgo_field(t, zs, phi0, i_save=[],
                     ).squeeze()
             
             f_fit = analytic_cont['phase']['fit_func'](eps_rho.squeeze(), f_t1.squeeze(), **analytic_cont['phase']['kwargs'])
-            g_fit = analytic_cont['amplitude']['fit_func'](eps_rho.squeeze(), Nt[it] * Phi_t1.squeeze(), **analytic_cont['amplitude']['kwargs'])
+            g_fit = analytic_cont['amplitude']['fit_func'](eps_rho.squeeze(), Phi_t1.squeeze(), **analytic_cont['amplitude']['kwargs'])
             ddf_fit = f_fit.deriv(axis=0, order=2)
             
             for l in range(rho):
@@ -266,8 +264,7 @@ def get_mgo_field(t, zs, phi0, i_save=[],
                                 'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit, 'ddf_fit': ddf_fit})
             Upsilon[it] = integral(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho])
 
-    ray_field = Upsilon
-    # ray_field = Nt*Upsilon
+    ray_field = Nt*Upsilon
     info = {'saved_results': saved_results,
             'Nt': Nt, 'Upsilon': Upsilon,
             'S': S, 'Q': Q, 'R': R,

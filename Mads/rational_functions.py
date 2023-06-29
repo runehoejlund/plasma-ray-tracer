@@ -199,7 +199,7 @@ def optimize_rational_func(x, y, coef_L0, coef_M0, deg_L, deg_M):
     coef_L, coef_M = unpack_coef(coef)
     return coef_L, coef_M
 
-def fit_rational_func(x, y, L, M, optimize=True):
+def fit_rational_func(x, y, L, M, optimize=False):
     '''Returns RationalFunction fit of x, y data on the form f(x) = P_L(x)/Q_M(x)
     where P_L is a polynomial of order L and Q_M is of order M.
     
