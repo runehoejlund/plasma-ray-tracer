@@ -3,6 +3,7 @@ import itertools
 from scipy.ndimage import convolve
 from math import floor, ceil
 from dataclasses import dataclass
+from scipy import optimize
 
 def take_slice(a, slice_ind, axis):
     return a[(*(slice(None), )*axis, slice_ind, *(slice(None), )*(a.ndim - axis - 1))]
@@ -48,6 +49,9 @@ def polyadd_ND(f_coef, g_coef):
     return NDPolynomial(f_coef_pad + g_coef_pad)
 
 def polymul_ND(f_coef, g_coef):
+    if len(f_coef) == 0 or len(g_coef) == 0:
+        return NDPolynomial([])
+    
     f_coef_pad = np.pad(f_coef, [(ceil((s-1)/2), floor((s-1)/2)) for s in g_coef.shape], mode='constant', constant_values=0)
     return NDPolynomial(convolve(f_coef_pad, g_coef, mode='constant', cval=0.0))
 
@@ -116,6 +120,11 @@ class RationalFunction:
     coef_L: np.ndarray
     coef_M: np.ndarray
 
+    def __init__(self, coef_L, coef_M):
+        assert len(coef_M) > 0, "Can't divide by 0. len of denominator's coef_M must be greater than 0 to represent a nonzero polynomial."
+        self.coef_L = coef_L
+        self.coef_M = coef_M
+
     def __call__(self, x):
         return NDPolynomial(self.coef_L)(x) / NDPolynomial(self.coef_M)(x)
     
@@ -141,7 +150,7 @@ def deg_as_array(deg, dims):
         _deg = np.asarray(deg)
     return _deg
 
-def fit_polynomial(x, y, deg):
+def fit_polynomial(x, y, deg, exclude_degrees=[]):
     '''Returns NDPolynomial fit of x, y data.
     
     Parameters:
@@ -158,11 +167,39 @@ def fit_polynomial(x, y, deg):
     assert len(_deg) == _x.shape[-1], "length of degrees, deg, must match number of features in x"
     degrees = _get_degrees(_deg)
     monomials = _vandermonde(_x, degrees)
-    coef = np.linalg.lstsq(monomials, _y, rcond=None)[0]
     coef_shape = tuple(np.array(_deg) + 1)
-    return NDPolynomial(coef.reshape(coef_shape))
+    coef = np.zeros(coef_shape)
 
-def fit_rational_func(x, y, L, M):
+    _exclude_degrees = [(d, ) if type(d) == int else tuple(d) for d in exclude_degrees]
+    assert np.all([len(d) == len(_deg) for d in _exclude_degrees]), 'exclude_degrees does not match number of dimensions'
+    include = np.array([tuple(d) not in _exclude_degrees for d in degrees])
+    coef[include.reshape(coef_shape)] = np.linalg.lstsq(monomials[:, include], _y, rcond=None)[0].squeeze()
+    
+    return NDPolynomial(coef)
+
+def optimize_rational_func(x, y, coef_L0, coef_M0, deg_L, deg_M):
+    # If we also wish to do a non-linear optimization afterwards, this is also possible:
+    L_shape = tuple(deg_L + 1)
+    M_shape = tuple(deg_M + 1)
+
+    def collect_coef(coef_L, coef_M):
+        return np.concatenate([coef_L, coef_M])
+    
+    def unpack_coef(coef):
+        coef_L = coef[:np.prod(deg_L + 1)]
+        coef_M = coef[np.prod(deg_L + 1):]
+        return coef_L, coef_M
+    
+    def model(x, *vargs):
+        coef = np.concatenate([vargs])
+        coef_L, coef_M = unpack_coef(coef)
+        return RationalFunction(coef_L.reshape(L_shape), coef_M.reshape(M_shape))(x)
+
+    coef = optimize.curve_fit(model, x, y, p0=collect_coef(coef_L0, coef_M0))[0]
+    coef_L, coef_M = unpack_coef(coef)
+    return coef_L, coef_M
+
+def fit_rational_func(x, y, L, M, optimize=False):
     '''Returns RationalFunction fit of x, y data on the form f(x) = P_L(x)/Q_M(x)
     where P_L is a polynomial of order L and Q_M is of order M.
     
@@ -196,5 +233,8 @@ def fit_rational_func(x, y, L, M):
     
     L_shape = tuple(_deg_L + 1)
     M_shape = tuple(_deg_M + 1)
+
+    if optimize:
+        coef_L, coef_M = optimize_rational_func(x, y, coef_L, coef_M, _deg_L, _deg_M)
 
     return RationalFunction(coef_L.reshape(L_shape), coef_M.reshape(M_shape))
