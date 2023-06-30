@@ -101,7 +101,7 @@ def get_branches(J):
     for branch in branch_masks:
         branch_min, branch_max = np.min(np.argwhere(branch)), np.max(np.argwhere(branch))
         seed = J_desc[(branch_min <= J_desc) & (J_desc <= branch_max)][0]
-        range_back, range_forward = range(seed, max(branch_min - 1, 0), -1), range(seed, min(branch_max + 1, J.shape[0] - 1), +1)
+        range_back, range_forward = range(seed, max(branch_min - 1, -1), -1), range(seed, min(branch_max + 1, J.shape[0]), +1)
         if len(range_back) > 0:
             branch_ranges.append(range_back)
             seeds.append(seed)
