@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
 from scipy.optimize import root
 from gauss_freud_quad import integrate_gauss_freud_quad
-from rational_functions import fit_polynomial, fit_rational_func
+from diff_func_fitters import fit_polynomial, fit_rational_func
 from warnings import warn
 
 #%% Symplectic Transformation
