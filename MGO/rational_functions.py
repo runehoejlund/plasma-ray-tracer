@@ -1,10 +1,21 @@
+from __future__ import annotations
+
 import numpy as np
 import itertools
 from scipy.ndimage import convolve
 from math import floor, ceil
 from dataclasses import dataclass
 from scipy import optimize
+from typing import Callable, List, Tuple
+import numdifftools as nd
+import sympy as sp
 
+class DifferentiableFunc:
+    def __call__(self, x):
+        pass
+
+    def deriv(self, axis: int, order: int) -> DifferentiableFunc:
+        pass
 def take_slice(a, slice_ind, axis):
     return a[(*(slice(None), )*axis, slice_ind, *(slice(None), )*(a.ndim - axis - 1))]
 
@@ -56,7 +67,7 @@ def polymul_ND(f_coef, g_coef):
     return NDPolynomial(convolve(f_coef_pad, g_coef, mode='constant', cval=0.0))
 
 @dataclass
-class NDPolynomial:
+class NDPolynomial(DifferentiableFunc):
     '''Class for representing a polynomial function of multiple variables
     coef: numpy.ndarray of shape (d1, d2, ..., dn) where d· are the highest degrees and n is the number of variables the function f(x1, x2, ..., xn) takes.
         the coef matrix should be formatted such that
@@ -101,17 +112,8 @@ class NDPolynomial:
             deriv = deriv._diff(axis=axis)
         return deriv
 
-# def polyadd_ND(f: NDPolynomial, g: NDPolynomial):
-#     f_coef_pad = np.pad(f.coef, [(0, max(sg - sf, 0)) for (sf, sg) in zip(f.coef.shape, g.coef.shape)], mode='constant', constant_values=0)
-#     g_coef_pad = np.pad(g.coef, [(0, max(sf - sg, 0)) for (sf, sg) in zip(f.coef.shape, g.coef.shape)], mode='constant', constant_values=0)
-#     return NDPolynomial(f_coef_pad + g_coef_pad)
-
-# def polymul_ND(f: NDPolynomial, g: NDPolynomial):
-#     f_coef_pad = np.pad(f.coef, [(ceil((s-1)/2), floor((s-1)/2)) for s in g.coef.shape], mode='constant', constant_values=0)
-#     return NDPolynomial(convolve(f_coef_pad, g.coef, mode='constant', cval=0.0))
-
 @dataclass
-class RationalFunction:
+class RationalFunction(DifferentiableFunc):
     '''Class for representing a rational function, i.e. a function which is the ratio of two polynomials:
     f(x) = P_L(x)/P_M(x)
     coef_L: np.ndarray, nominator coefficients
@@ -238,3 +240,49 @@ def fit_rational_func(x, y, L, M, optimize=False):
         coef_L, coef_M = optimize_rational_func(x, y, coef_L, coef_M, _deg_L, _deg_M)
 
     return RationalFunction(coef_L.reshape(L_shape), coef_M.reshape(M_shape))
+
+@dataclass
+class FiniteDiffFunc1D(DifferentiableFunc):
+    '''Class for representing function which is differentiated through finite differences
+    '''
+    func: Callable
+
+    def __call__(self, x):
+        _x = _as_vector(x)
+        return self.func(_x).squeeze()
+
+    def deriv(self, axis: int, order: int) -> DifferentiableFunc:
+        assert axis == 0, 'Only Supports differentiating of 1D function'
+        return nd.Derivative(self.func, n=order)
+
+@dataclass
+class SymbolicFunc1D:
+    '''Class for representing function which is differentiated through symbolic differentiation with sympy
+    '''
+    sympy_func: sp.core.Symbol
+    sympy_arg: sp.core.Symbol
+    sympy_params: List[Tuple]
+    
+    def __call__(self, x):
+        func = self.sympy_func.subs(self.sympy_params)
+        lamb = sp.lambdify(self.sympy_arg, func, 'numpy')
+        if func.is_constant():
+            return np.full_like(x, lamb(x))
+        else:
+            return lamb(x)
+    
+    def deriv(self, axis, order=1):
+        assert axis == 0, 'only supports 1D symbolic func'
+        return SymbolicFunc1D(sp.diff(self.sympy_func, (self.sympy_arg, order)), self.sympy_arg, self.sympy_params)
+
+@dataclass
+class SumFunc(DifferentiableFunc):
+    '''Class for representing sum of two DifferentiableFunc functions
+    '''
+    funcs: List[DifferentiableFunc]
+
+    def __call__(self, x):
+        return sum([f(x) for f in self.funcs])
+
+    def deriv(self, axis, order=1):
+        return SumFunc([f.deriv(axis=axis, order=order) for f in self.funcs])

@@ -5,6 +5,7 @@ finite differences. Note, the `grad` function allows for arbitrary
 dimensions in the input and output, i.e. f : R^n -> R^m.
 '''
 import numpy as np
+import util as ut
 
 def _dtake(a, index, axis):
     '''numpy take a single index but keep dimensions.'''
@@ -97,3 +98,26 @@ def grad(f, *args, axes=None, cropped_axes=[]):
         grad_f[..., i] = grad_f_i
 
     return grad_f.squeeze()
+
+def local_grad(f, index, *args, axes=None, order=1):
+    '''Determine gradient of a given order evaluated at the given index.'''
+    _f = f.squeeze()
+    if type(index) == int:
+        index = [index]
+    if axes is None:
+        axes = np.arange(len(args))
+    
+    order_grad_f = np.zeros(len(args), dtype=_f.dtype)
+    for i, (axis, xi) in enumerate(zip(axes, args)):
+        _order = order
+        _nbh = slice(None)
+        _ind = index[i]
+        _x = xi
+        _out_i = f[_nbh]
+        for j in range(order):
+            _nbh, _ind = ut.neighbourhood(_ind % len(_x[_nbh]), len(_x[_nbh]), N_neighbours=_order - j)
+            _out_i = grad(_out_i[_nbh], _x[_nbh], axes=[axis])
+        
+        order_grad_f[i] = _out_i[_ind]
+    
+    return order_grad_f

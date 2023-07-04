@@ -4,9 +4,10 @@ import util as ut
 from scipy.signal import argrelextrema
 from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
-from scipy.optimize import brentq
+from scipy.optimize import root
 from gauss_freud_quad import integrate_gauss_freud_quad
 from rational_functions import fit_polynomial, fit_rational_func
+from warnings import warn
 
 #%% Symplectic Transformation
 def gram_schmidt_orthogonalize(Q):
@@ -80,15 +81,16 @@ def decompose_symplectic_trfm(S, gradtau_z, ND):
 def get_prefactor(phi0, xs, ks, t, B, ranks, Lambda_rhos, A_zetas, R):
     # Calculate prefactor
     dt_x0 = fd.grad(xs[:3, ..., 0], t)[0, ...]
-    Nt = (phi0 * np.emath.sqrt(dt_x0)
+    Nt = (phi0 * np.emath.sqrt(dt_x0/np.mean(dt_x0))
         * np.exp(1j * ( cumulative_trapezoid(ut.inner_product(fd.grad(xs.squeeze(), t)[..., np.newaxis], ks), t, initial=0, axis=0) ))
         ) / (
         np.emath.power((- 1j * 2*np.pi), (ranks/2)) * (
             ut.continuous_sqrt_of_reals(
-                np.sign(B.squeeze()) * np.linalg.det(Lambda_rhos) * np.linalg.det(A_zetas) * np.linalg.det(R)
+                np.sign(B.squeeze()) * np.abs(np.linalg.det(Lambda_rhos) * np.linalg.det(A_zetas)) * np.linalg.det(R)
             )
         )
     )
+    assert np.all(ranks == 1), 'only supports ranks 1'
     return Nt
 
 # %% Calculating Upsilon
@@ -110,17 +112,6 @@ def get_branches(J):
             seeds.append(seed)
     return branch_masks, seeds, branch_ranges
 
-def neighbourhood(i, N, N_neighbours=1):
-    '''returns slice corresponding to neighbourhood of i
-        and index of i in sliced array.'''
-    if i < 0 or i >= N:
-        raise ValueError('index for neighbourhood is out of bounds')
-    if i - N_neighbours < 0:
-        return slice(min(1+2*N_neighbours, N)), i
-    if i + N_neighbours >= N:
-        return slice(max(0, N-(1+2*N_neighbours)), N), - (N-i)
-    return slice(i - N_neighbours, i + N_neighbours + 1), N_neighbours
-
 def start_angles(ddf, eps_0=0):
     alpha = np.angle(ddf(eps_0))
     sigma_p = -np.pi/4 - alpha/2 + np.pi/2
@@ -130,7 +121,7 @@ def start_angles(ddf, eps_0=0):
 def new_angles(f, sigma_p, sigma_m, l_p, l_m):
     '''Calculate new direction of steepest descent
         as the descent which is closest to current direction, sigma.'''
-    r = np.mean([l_p, l_m])
+    r = np.mean([np.abs(l_p), np.abs(l_m)])
     C_circ = lambda _r, theta: _r*np.exp(1j*theta)
     F_circ = lambda theta: np.imag(f(C_circ(r, theta)))
     sigmas = np.linspace(0, 2*np.pi, 1000)
@@ -145,8 +136,8 @@ def new_angles(f, sigma_p, sigma_m, l_p, l_m):
     new_sigma_m = sigmas[new_sigma_m_arg]
     return new_sigma_p, new_sigma_m
 
-def get_l_and_s(f, sigma_p, sigma_m, eps_0=0):
-    Delta_F = 10
+def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, s0, eps_0=0):
+    Delta_F = 1
 
     C_p = lambda l: eps_0 + np.abs(l) * np.exp(1j*sigma_p)
     C_m = lambda l: eps_0 + np.abs(l) * np.exp(1j*sigma_m)
@@ -154,41 +145,47 @@ def get_l_and_s(f, sigma_p, sigma_m, eps_0=0):
     F_p = lambda l: np.imag(f(C_p(l)))
     F_m = lambda l: np.imag(f(C_m(l)))
 
-    for i in range(14):
-        try:
-            l_p = brentq(lambda l: F_p(l) - F_p(0) - Delta_F, 0, 10**(i))
-            break
-        except:
-            continue
-    
-    for i in range(14):
-        try:
-            l_m = brentq(lambda l: F_m(l) - F_m(0) - Delta_F, 0, 10**(i))
-            break
-        except:
-            continue
-    
-    s_p = Delta_F/(np.abs(l_p)**2)
-    s_m = Delta_F/(np.abs(l_m)**2)
+    l0_p = l_p
+    l0_m = l_m
+    if l_p == None or l_m == None:
+        l0 = np.sqrt(np.abs(Delta_F/s0))
+        l0_p, l0_m = l0, l0
+    sol_p = root(lambda l: F_p(l) - F_p(0) - Delta_F, l0_p)
+    sol_m = root(lambda l: F_m(l) - F_m(0) - Delta_F, l0_m)
 
-    return l_p, l_m, s_p, s_m
+    _l_p, _l_m = l_p, l_m
+    if sol_p.success:
+        _l_p = np.abs(sol_p['x'][0])
+    else:
+        warn('problem with finding l_p:' + sol_p['message'])
 
-def get_angles_and_l_and_s(sigma_p, sigma_m, l_p, l_m, s_p, s_m, f, ddf=None, eps_0=0):
+    if sol_m.success:
+        _l_m = np.abs(sol_m['x'][0])
+    else:
+        warn('problem with finding l_p:' + sol_m['message'])
+
+    _s_p = Delta_F/(np.abs(_l_p)**2)
+    _s_m = Delta_F/(np.abs(_l_m)**2)
+
+    return _l_p, _l_m, _s_p, _s_m
+
+def get_angles_and_l_and_s(sigma_p, sigma_m, l_p, l_m, s0, f, ddf=None, eps_0=0):
+    '''returns new _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m'''
     if sigma_p == None or sigma_m == None:
         _sigma_p, _sigma_m = start_angles(ddf, eps_0)
-        _l_p, _l_m, _s_p, _s_m = get_l_and_s(f, _sigma_p, _sigma_m, eps_0)
     else:
         _sigma_p, _sigma_m = new_angles(f, sigma_p, sigma_m, l_p, l_m)
-        _l_p, _l_m, _s_p, _s_m = l_p, l_m, s_p, s_m
+    _l_p, _l_m, _s_p, _s_m = get_l_and_s(f, _sigma_p, _sigma_m, l_p, l_m, s0)
+
     return _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m
 
-def integral(f, g, sigma_p, sigma_m, s_p, s_m, eps_0=0):
+def integrate_osc_func(f, g, sigma_p, sigma_m, s_p, s_m, gauss_quad_order=10):
     sigma_p, sigma_m, s_p, s_m = sigma_p.astype(complex), sigma_m.astype(complex), s_p.astype(complex), s_m.astype(complex)
     h = lambda eps: g(eps) * np.exp(1j*f(eps))
     dl_p, dl_m = np.exp(1j*sigma_p)/np.sqrt(s_p), np.exp(1j*sigma_m)/np.sqrt(s_m)
     I = integrate_gauss_freud_quad(
         lambda l: (h(l*dl_p) * dl_p - h(l*dl_m) * dl_m),
-        n = 10,
+        n = gauss_quad_order,
         dims=len(sigma_p)
     )
     return I
@@ -199,7 +196,8 @@ def check_rays(t, zs):
 
 def get_mgo_field(t, zs, phi0, i_save=[],
                   analytic_cont={'phase': {'fit_func': fit_polynomial, 'kwargs': {'deg': 3, 'exclude_degrees': [1]}},
-                             'amplitude': {'fit_func': fit_rational_func, 'kwargs': {'L': 2, 'M': 1, 'optimize': False}}}):
+                             'amplitude': {'fit_func': fit_rational_func, 'kwargs': {'L': 2, 'M': 1, 'optimize': False}}},
+                  gauss_quad_order=10):
     '''Returns branch_masks, ray_field, info
     '''
     check_rays(t, zs)
@@ -255,14 +253,15 @@ def get_mgo_field(t, zs, phi0, i_save=[],
             ddf_fit = f_fit.deriv(axis=0, order=2)
             
             for l in range(rho):
-                sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l] = get_angles_and_l_and_s(sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l], f_fit, ddf_fit)
+                s0 = fd.local_grad(f_t1, it1, eps_rho.squeeze(), axes=[l], order=2)
+                sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l] = get_angles_and_l_and_s(sigma_p[l], sigma_m[l], l_p[l], l_m[l], s0, f_fit, ddf_fit)
             
             if it in i_save:
                 saved_results.append({'t1': t[it], 'it': it, 'mask_t1': mask_t1, 'it1': it1,
-                                'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
+                                'Xs_t1_all': Xs_t1_all, 'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
                                 'sigma_p': np.copy(sigma_p), 'sigma_m': np.copy(sigma_m), 'l_p': np.copy(l_p), 'l_m': np.copy(l_m), 's_p': np.copy(s_p), 's_m': np.copy(s_m),
                                 'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit, 'ddf_fit': ddf_fit})
-            Upsilon[it] = integral(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho])
+            Upsilon[it] = integrate_osc_func(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho], gauss_quad_order=gauss_quad_order)
 
     ray_field = Nt*Upsilon
     info = {'saved_results': saved_results,
