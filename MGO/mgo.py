@@ -282,3 +282,18 @@ def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field):
         return A0 * interp_field(x)
     
     return field
+
+def get_go_field_1D(t, zs, phi0):
+    check_rays(t, zs)
+    ND = int(zs.shape[-1]/2)
+    xs = zs[..., :ND]
+    ks = zs[..., ND:]
+
+    gradtau_x = fd.grad(xs.squeeze(), t)
+    J = gradtau_x.squeeze()
+    branch_masks, seeds, branch_ranges = get_branches(J)
+    theta = cumulative_trapezoid(ks.squeeze()*gradtau_x.squeeze(), t, initial=0) + ut.continuous_angle_of_reals(J)
+    phi = phi0*ut.continuous_sqrt_of_reals(J[0]/J)
+    ray_field = phi * np.exp(1j*theta)
+
+    return branch_masks, ray_field
