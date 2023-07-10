@@ -18,7 +18,6 @@ from os import path, chdir
 chdir(path.dirname(path.abspath(__file__)))
 
 import sys
-import os
 sys.path.append('../')
 
 import numpy as np
