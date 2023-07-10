@@ -17,6 +17,10 @@ with a neural network or another simpler regression model.
 from os import path, chdir
 chdir(path.dirname(path.abspath(__file__)))
 
+import sys
+import os
+sys.path.append('../')
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
