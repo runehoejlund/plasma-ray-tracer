@@ -2,7 +2,7 @@ import numpy as np
 import finite_diff as fd
 import util as ut
 from scipy.signal import argrelextrema
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator
 from scipy.integrate import cumulative_trapezoid
 from scipy.optimize import root
 from gauss_freud_quad import integrate_gauss_freud_quad
@@ -103,11 +103,12 @@ def get_branches(J):
     for branch in branch_masks:
         branch_min, branch_max = np.min(np.argwhere(branch)), np.max(np.argwhere(branch))
         seed = J_desc[(branch_min <= J_desc) & (J_desc <= branch_max)][0]
-        range_back, range_forward = range(seed, max(branch_min - 1, -1), -1), range(seed, min(branch_max + 1, J.shape[0]), +1)
-        if len(range_back) > 0:
+
+        range_back, range_forward = range(seed, max(branch_min -1, -1), -1), range(seed, min(branch_max + 1, J.shape[0]), +1)
+        if len(range_back) > 1:
             branch_ranges.append(range_back)
-            seeds.append(seed)
-        if len(range_forward) > 0:
+            seeds.append(seed - 1)
+        if len(range_forward) > 1:
             branch_ranges.append(range_forward)
             seeds.append(seed)
     return branch_masks, seeds, branch_ranges
@@ -270,7 +271,8 @@ def get_mgo_field(t, zs, phi0, i_save=[],
             'ranks': ranks, 'A_zetas': A_zetas, 'A_rhos': A_rhos, 'Lambda_rhos': Lambda_rhos}
     return branch_masks, ray_field, info
 
-def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field):
+def get_A0_and_interpolation(phi0, x0, xs, branch_masks, ray_field):
+    '''returns A0, interp_field needed to superpose ray fields satisfying boundary condition.'''
     branches = [interp1d(xs[mask].squeeze(), ray_field[mask], bounds_error=False, fill_value='extrapolate') for mask in branch_masks]
 
     def interp_field(x):
@@ -278,12 +280,19 @@ def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field):
 
     A0 = phi0/interp_field(x0)
 
+    return A0, interp_field
+
+def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field):
+    '''returns interpolated function `field` '''
+    A0, interp_field = get_A0_and_interpolation(phi0, x0, xs, branch_masks, ray_field)
+
     def field(x):
         return A0 * interp_field(x)
     
     return field
 
 def get_go_field_1D(t, zs, phi0):
+    '''returns branch_masks, ray_field'''
     check_rays(t, zs)
     ND = int(zs.shape[-1]/2)
     xs = zs[..., :ND]
@@ -297,3 +306,59 @@ def get_go_field_1D(t, zs, phi0):
     ray_field = phi * np.exp(1j*theta)
 
     return branch_masks, ray_field
+
+def get_go_field_3D(t, y0s, z0s, zs, phi0):
+    '''returns branch_masks, ray_field'''
+    ND = int(zs.shape[-1]/2)
+    rs = zs[..., :ND]
+    ks = zs[..., ND:]
+    gradtau_r = fd.grad(rs.squeeze(), t, y0s, z0s)
+    gradt_r = gradtau_r[..., 0]
+    J = np.linalg.det(gradtau_r).squeeze()
+    branch_masks = ut.get_masks_of_const_sgn(J)
+    theta = cumulative_trapezoid(ut.inner_product(ks, gradt_r), t, initial=0, axis=0)
+    phi = phi0 * ut.continuous_sqrt_of_reals(J[0, ...]/J)
+    ray_field = phi * np.exp(1j*theta)
+
+    return branch_masks, ray_field
+
+def get_covered_region(rs):
+    '''returns `in_region` function which takes positions as input and returns boolean
+    values indicating whether each position is covered by the rays with positions `rs`'''
+    ND = rs.shape[-1]
+    bins = (*(s for s in rs.shape[:ND]), )
+    H, edges = np.histogramdd(rs.reshape(-1, ND), bins=bins)
+    centers = [edge[:-1] + np.diff(edge)/2 for edge in edges]
+    in_region = RegularGridInterpolator(tuple(centers), (H > 0).astype(int), method='nearest', fill_value=0, bounds_error=False)
+    return in_region
+
+def superpose_ray_fields_3D(rs, branch_masks, ray_field, in_region=None):
+    '''returns interp_field_r, interp_field, branch_interpolations, in_region'''
+    if in_region == None:
+        in_region = get_covered_region(rs)
+    
+    branch_interpolations = [LinearNDInterpolator(rs[mask], ray_field[mask], fill_value=0) for mask in branch_masks]
+
+    def interp_field_r(r):
+        return in_region(r)*sum(f(r) for f in branch_interpolations)
+
+    def interp_field(x, y, z):
+        r = np.stack([x, y, z], axis=-1)
+        return interp_field_r(r)
+    
+    return interp_field_r, interp_field, branch_interpolations, in_region
+
+def get_in_out_interpolations(in_region, branch_interpolations):
+    '''returns interp_field_in_r, interp_field_in, interp_field_out_r, interp_field_out'''
+    interp_field_in_r = lambda r: in_region(r)*branch_interpolations[0](r)
+    interp_field_out_r = lambda r: in_region(r)*branch_interpolations[1](r)
+
+    def interp_field_in(x, y, z):
+        r = np.stack([x, y, z], axis=-1)
+        return interp_field_in_r(r)
+
+    def interp_field_out(x, y, z):
+        r = np.stack([x, y, z], axis=-1)
+        return interp_field_out_r(r)
+    
+    return interp_field_in_r, interp_field_in, interp_field_out_r, interp_field_out

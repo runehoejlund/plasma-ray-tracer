@@ -62,7 +62,7 @@ def neighbourhood(i, N, N_neighbours=1):
 
 def continuous_angle_of_reals(x, axis=0):
     sgn = np.sign(x)
-    sgn0 = np.take(sgn, 0, axis=axis)
+    sgn0 = np.take(sgn, 0, axis=axis)[np.newaxis, ...]
     return np.angle(x) + 2*np.pi*np.cumsum(np.heaviside(np.diff(sgn, prepend=sgn0, axis=axis), 0), axis=axis)
 
 def continuous_sqrt_of_reals(x, axis=0):
