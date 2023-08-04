@@ -34,7 +34,7 @@ should also be detached before performing the calculations
 (to exclude it from the backward differentation step).
 
 **Note:** The annotations do not set requirements for the
-type of the input variables, but instead provides guidence
+type of the input variables, but instead provides guidance
 on how to parse the input before performing the function
 call. Thus, the user may give numpy arrays as input for
 a function decorated with `@torch_func`.
