@@ -1,7 +1,7 @@
 # Metaplectic Geometrical Optics for Ray Tracing in Fusion Plasmas
 This is the repository for my Master's thesis project prepared over six months at the Section for Plasma Physics and Fusion Energy, at the Technical University of Denmark, DTU, in partial fulfillment for the degree: Master of Science in Engineering Physics, MSc Eng.
 
-Please see the [Thesis.pdf](thesis.pdf) document for the actual thesis where much more information on the project is provided. This ReadMe covers how to reproduce the main results.
+Please see the [Thesis.pdf](Thesis.pdf) document for the actual thesis where much more information on the project is provided. This ReadMe covers how to reproduce the main results.
 
 ## Getting Started
 This project uses Python and iPython notebooks. The necessary python packages are listed in the `requirements.txt` file. To reproduce the main results, I recommend using the Anaconda-distribution of python and creating a virtual environment by running the following commands in a terminal (e.g. from Visual Studio Code):
