@@ -3,9 +3,11 @@
 
 numpy
 matplotlib
-pandas
 scipy
 torch
 sympy
 numdifftools
 scikit-learn
+scikit-image
+ipython
+ipykernel
