@@ -5,9 +5,9 @@ from scipy.signal import argrelextrema
 from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator
 from scipy.integrate import cumulative_trapezoid
 from scipy.optimize import root
-from gauss_freud_quad import integrate_gauss_freud_quad
-from diff_func_fitters import fit_polynomial, fit_rational_func
+from gauss_freud_quad import integrate_gauss_freud_quad, get_nodes_and_weights
 from warnings import warn
+from baryrat import aaa
 
 #%% Symplectic Transformation
 def gram_schmidt_orthogonalize(Q):
@@ -113,8 +113,8 @@ def get_branches(J):
             seeds.append(seed)
     return branch_masks, seeds, branch_ranges
 
-def start_angles(ddf, eps_0=0):
-    alpha = np.angle(ddf(eps_0))
+def start_angles(ddf0):
+    alpha = np.angle(ddf0)
     sigma_p = -np.pi/4 - alpha/2 + np.pi/2
     sigma_m = -np.pi/4 - alpha/2 - np.pi/2
     return sigma_p, sigma_m
@@ -137,7 +137,7 @@ def new_angles(f, sigma_p, sigma_m, l_p, l_m):
     new_sigma_m = sigmas[new_sigma_m_arg]
     return new_sigma_p, new_sigma_m
 
-def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, s0, eps_0=0):
+def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, smin, ddf0, eps_0=0):
     Delta_F = 1
 
     C_p = lambda l: eps_0 + np.abs(l) * np.exp(1j*sigma_p)
@@ -149,12 +149,12 @@ def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, s0, eps_0=0):
     l0_p = l_p
     l0_m = l_m
     if l_p == None or l_m == None:
-        l0 = np.sqrt(np.abs(Delta_F/s0))
+        l0 = np.sqrt(np.abs(Delta_F/ddf0))
         l0_p, l0_m = l0, l0
     sol_p = root(lambda l: F_p(l) - F_p(0) - Delta_F, l0_p)
     sol_m = root(lambda l: F_m(l) - F_m(0) - Delta_F, l0_m)
 
-    _l_p, _l_m = l_p, l_m
+    _l_p, _l_m = l0_p, l0_m
     if sol_p.success:
         _l_p = np.abs(sol_p['x'][0])
     else:
@@ -165,18 +165,18 @@ def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, s0, eps_0=0):
     else:
         warn('problem with finding l_p:' + sol_m['message'])
 
-    _s_p = Delta_F/(np.abs(_l_p)**2)
-    _s_m = Delta_F/(np.abs(_l_m)**2)
+    _s_p = max(smin, Delta_F/(np.abs(_l_p)**2))
+    _s_m = max(smin, Delta_F/(np.abs(_l_m)**2))
 
     return _l_p, _l_m, _s_p, _s_m
 
-def get_angles_and_l_and_s(sigma_p, sigma_m, l_p, l_m, s0, f, ddf=None, eps_0=0):
+def get_angles_and_l_and_s(sigma_p, sigma_m, l_p, l_m, smin, ddf0, f):
     '''returns new _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m'''
     if sigma_p == None or sigma_m == None:
-        _sigma_p, _sigma_m = start_angles(ddf, eps_0)
+        _sigma_p, _sigma_m = start_angles(ddf0)
     else:
         _sigma_p, _sigma_m = new_angles(f, sigma_p, sigma_m, l_p, l_m)
-    _l_p, _l_m, _s_p, _s_m = get_l_and_s(f, _sigma_p, _sigma_m, l_p, l_m, s0)
+    _l_p, _l_m, _s_p, _s_m = get_l_and_s(f, _sigma_p, _sigma_m, l_p, l_m, smin, ddf0)
 
     return _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m
 
@@ -196,9 +196,9 @@ def check_rays(t, zs):
     assert ND == 1, 'Only 1D MGO currently supported, last dimension of zs was found to be ' + str(zs.shape[-1]) + ' corresponding to ND = ' + str(ND) 
 
 def get_mgo_field(t, zs, phi0, i_save=[],
-                  analytic_cont={'phase': {'fit_func': fit_polynomial, 'kwargs': {'deg': 3, 'exclude_degrees': [1]}},
-                             'amplitude': {'fit_func': fit_rational_func, 'kwargs': {'L': 2, 'M': 1, 'optimize': False}}},
-                  gauss_quad_order=10):
+        analytic_cont={'phase': {'fit_func': aaa, 'kwargs': {'mmax': 20}},
+                       'amplitude': {'fit_func': aaa, 'kwargs': {'mmax': 20}}},
+        gauss_quad_order=10, max_extrapolation = 3/2):
     '''Returns branch_masks, ray_field, info
     '''
     check_rays(t, zs)
@@ -217,6 +217,9 @@ def get_mgo_field(t, zs, phi0, i_save=[],
     J = gradtau_z[:, :ND].squeeze()
     branch_masks, seeds, branch_ranges = get_branches(J)
     
+    gnodes, _ = get_nodes_and_weights(gauss_quad_order)
+    lmax = np.max(gnodes)
+
     for seed, branch_range in zip(seeds, branch_ranges):
         print('branch:', branch_range, ' '*40, end='\r')
 
@@ -251,17 +254,19 @@ def get_mgo_field(t, zs, phi0, i_save=[],
             
             f_fit = analytic_cont['phase']['fit_func'](eps_rho.squeeze(), f_t1.squeeze(), **analytic_cont['phase']['kwargs'])
             g_fit = analytic_cont['amplitude']['fit_func'](eps_rho.squeeze(), Phi_t1.squeeze(), **analytic_cont['amplitude']['kwargs'])
-            ddf_fit = f_fit.deriv(axis=0, order=2)
-            
+
+            epsmax = np.max(np.abs(eps_rho))
+            smin = (1/max_extrapolation * lmax/epsmax)**2
+
             for l in range(rho):
-                s0 = fd.local_grad(f_t1, it1, eps_rho.squeeze(), axes=[l], order=2)
-                sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l] = get_angles_and_l_and_s(sigma_p[l], sigma_m[l], l_p[l], l_m[l], s0, f_fit, ddf_fit)
+                ddf0 = fd.local_grad(f_t1, it1, eps_rho.squeeze(), axes=[l], order=2)
+                sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l] = get_angles_and_l_and_s(sigma_p[l], sigma_m[l], l_p[l], l_m[l], smin, ddf0, f_fit)
             
             if it in i_save:
                 saved_results.append({'t1': t[it], 'it': it, 'mask_t1': mask_t1, 'it1': it1,
                                 'Xs_t1_all': Xs_t1_all, 'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
                                 'sigma_p': np.copy(sigma_p), 'sigma_m': np.copy(sigma_m), 'l_p': np.copy(l_p), 'l_m': np.copy(l_m), 's_p': np.copy(s_p), 's_m': np.copy(s_m),
-                                'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit, 'ddf_fit': ddf_fit})
+                                'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit, 'ddf0': ddf0})
             Upsilon[it] = integrate_osc_func(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho], gauss_quad_order=gauss_quad_order)
 
     ray_field = Nt*Upsilon
