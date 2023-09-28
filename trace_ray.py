@@ -70,7 +70,20 @@ def trace_ray(r0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, r_min=None, r
         warn(sol.message)
     return sol
 
-def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None, x_max=None, tsteps=1000, solve_ivp_args={}, true_time=False):
+def extract_sol(sol):
+    ND = int(sol.y.shape[0]/2)
+    xs = sol.y[:ND].T
+    ks = sol.y[ND:].T
+    zs = np.concatenate([xs, ks], axis=-1)
+
+    # ray tracing stops when it hits boundary, so we don't know
+    # exact number of timesteps before ray tracing has completed.
+    t = sol.t
+    nt = len(t)
+
+    return t, xs, ks, zs, nt
+
+def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None, x_max=None, tsteps=1000, solve_ivp_args={}, true_time=False, ghost_ratio=0):
     q0 = np.hstack((x0, k0))
     
     # RHS of ray-tracer ODE
@@ -94,10 +107,47 @@ def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None
         
         return torch.hstack((RHS_x, RHS_k)).detach().numpy()
 
-    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events_1D(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+    t_eval = np.linspace(tmin, tmax, tsteps)
+    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = t_eval, events=get_boundary_events_1D(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+    
     if not sol.success:
         warn(sol.message)
-    return sol
+        return
+
+    t_C, xs_C, ks_C, zs_C, nt_C = extract_sol(sol)
+
+    # If we have no ghost points, simply return solution between tmin and tmax
+    if ghost_ratio == 0:
+        i_start = 0
+        i_end = nt_C
+        return t_C, xs_C, ks_C, zs_C, i_start, i_end
+    
+    # Trace backwards and forwards to get ghost point data
+    T = tmax - tmin
+    dt = T/(tsteps - 1)
+    t_ghost_L = np.arange(np.min(sol['t']), np.min(sol['t']) - ghost_ratio*T, -dt)
+    t_ghost_R = np.arange(np.max(sol['t']), np.max(sol['t']) + ghost_ratio*T, dt)
+
+    sol_L = solve_ivp(f, [np.max(t_ghost_L), np.min(t_ghost_L)], sol['y'][..., 0], t_eval = t_ghost_L, rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+    sol_R = solve_ivp(f, [np.min(t_ghost_R), np.max(t_ghost_R)], sol['y'][..., -1], t_eval = t_ghost_R, rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+
+    t_L, xs_L, ks_L, zs_L, nt_L = extract_sol(sol_L)
+    t_L, xs_L, ks_L, zs_L = t_L[:0:-1], xs_L[:0:-1], ks_L[:0:-1], zs_L[:0:-1]
+    nt_L = nt_L - 1
+    t_R, xs_R, ks_R, zs_R, nt_R = extract_sol(sol_R)
+    t_R, xs_R, ks_R, zs_R = t_R[1:], xs_R[1:], ks_R[1:], zs_R[1:]
+    nt_R = nt_R - 1
+
+    # Concatenate ghost point traces and central trace:
+    t = np.hstack([t_L, t_C, t_R])
+    xs = np.vstack([xs_L, xs_C, xs_R])
+    ks = np.vstack([ks_L, ks_C, ks_R])
+    zs = np.vstack([zs_L, zs_C, zs_R])
+    
+    i_start = nt_L # index of first (non-ghost) datapoint
+    i_end = len(t) - nt_R # index of first right ghost datapoint
+
+    return t, xs, ks, zs, i_start, i_end
 
 def get_t(sol, omega, D, D_args = {}):
     # Get derivative of dispersion rel. w.r.t. omega

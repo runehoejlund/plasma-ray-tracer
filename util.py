@@ -52,10 +52,10 @@ def neighbourhood(i, N, N_neighbours=1):
         return slice(max(0, N-(1+2*N_neighbours)), N), - (N-i)
     return slice(i - N_neighbours, i + N_neighbours + 1), N_neighbours
 
-# def continuous_angle(z, axis=0):
-#     z0 = np.take(z, 0, axis=axis)
-#     arg0 = np.angle(z0)
-#     return arg0 + np.cumsum(np.imag(np.diff(z, prepend=z0)/z))
+def continuous_angle(z, axis=0):
+    if np.all(np.isclose(np.imag(z), 0)):
+        return continuous_angle_of_reals(z, axis=axis)
+    return np.unwrap(np.angle(z), discont=np.pi)
 
 # def continuous_sqrt(z, axis=0):
 #     return np.sqrt(np.abs(z)) * np.exp(1j*continuous_angle(z)/2)
