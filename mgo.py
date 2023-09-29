@@ -5,7 +5,7 @@ from scipy.signal import argrelextrema
 from scipy.interpolate import interp1d, RegularGridInterpolator, LinearNDInterpolator
 from scipy.integrate import cumulative_trapezoid
 from scipy.optimize import root
-from gauss_freud_quad import integrate_gauss_freud_quad, get_nodes_and_weights
+from gauss_freud_quad import integrate_gauss_freud_quad, get_nodes_and_weights, get_max_nodes
 from warnings import warn
 from baryrat import aaa
 
@@ -127,10 +127,10 @@ def start_angles(ddf0):
     sigma_m = -np.pi/4 - alpha/2 - np.pi/2
     return sigma_p, sigma_m
 
-def new_angles(f, sigma_p, sigma_m, s_p, s_m):
+def new_angles(f, sigma_p, sigma_m, lamb):
     '''Calculate new direction of steepest descent
         as the descent which is closest to current direction, sigma.'''
-    r = np.mean([np.abs(node0/np.sqrt(s_p)), np.abs(node0/np.sqrt(s_m))])
+    r = np.abs(node0 * lamb)
     C_circ = lambda _r, theta: _r*np.exp(1j*theta)
     F_circ = lambda theta: np.imag(f(C_circ(r, theta)))
     sigmas = np.linspace(0, 2*np.pi, 1000)
@@ -183,20 +183,18 @@ def get_l_and_s(f, sigma_p, sigma_m, l_p, l_m, smin, ddf0, eps_0=0):
 
     return _l_p, _l_m, _s_p, _s_m
 
-def get_angles_and_l_and_s(sigma_p, sigma_m, l_p, l_m, s_p, s_m, smin, ddf0, f):
-    '''returns new _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m'''
+def get_angles(sigma_p, sigma_m, lamb, f, ddf0):
+    '''returns new _sigma_p, _sigma_m'''
     if sigma_p == None or sigma_m == None:
         _sigma_p, _sigma_m = start_angles(ddf0)
     else:
-        _sigma_p, _sigma_m = new_angles(f, sigma_p, sigma_m, s_p, s_m)
-    _l_p, _l_m, _s_p, _s_m = get_l_and_s(f, _sigma_p, _sigma_m, l_p, l_m, smin, ddf0)
+        _sigma_p, _sigma_m = new_angles(f, sigma_p, sigma_m, lamb)
+    return _sigma_p, _sigma_m
 
-    return _sigma_p, _sigma_m, _l_p, _l_m, _s_p, _s_m
-
-def integrate_osc_func(f, g, sigma_p, sigma_m, s_p, s_m, gauss_quad_order=10):
-    sigma_p, sigma_m, s_p, s_m = sigma_p.astype(complex), sigma_m.astype(complex), s_p.astype(complex), s_m.astype(complex)
+def integrate_osc_func(f, g, sigma_p, sigma_m, lamb, gauss_quad_order):
+    sigma_p, sigma_m, lamb = sigma_p.astype(complex), sigma_m.astype(complex), lamb.astype(complex)
     h = lambda eps: g(eps) * np.exp(1j*f(eps))
-    dl_p, dl_m = np.exp(1j*sigma_p)/np.sqrt(s_p), np.exp(1j*sigma_m)/np.sqrt(s_m)
+    dl_p, dl_m = lamb * np.exp(1j*sigma_p), lamb * np.exp(1j*sigma_m)
     I = integrate_gauss_freud_quad(
         lambda l: (h(l*dl_p) * dl_p - h(l*dl_m) * dl_m),
         n = gauss_quad_order,
@@ -223,6 +221,17 @@ def _get_SVD_projected_qtys(A_rhos, Lambda_rhos, Xs_t1, Ks_t1, ranks, it, it1):
     Ks_rho = Ks_t1[:, :rho]
     return rho, a_rho, Lambda_rho, Ks_rho
 
+def _get_max_abs(eps):
+    return min(np.max(eps[eps > 0]), np.max(-eps[eps < 0]))
+
+def _get_max_extrapolation(S_t1, zs, it_all, eps_all):
+    ND = _get_ND(zs)
+    K = np.abs((S_t1[ND:, :] @ zs[it_all, :, np.newaxis]).squeeze())
+    wavelength = 2*np.pi/K
+    epsmax = _get_max_abs(eps_all)
+    max_extrapolation = 1 + wavelength/(2*epsmax)
+    return max_extrapolation
+
 def _get_Xs_t1_and_Ks_t1(Xs_t1_all, mask_t1, S_t1, zs):
     ND = _get_ND(zs)
     Xs_t1 = Xs_t1_all[mask_t1]
@@ -247,41 +256,62 @@ def _get_eikonal_fields(t, Xs_t1, Ks_t1, J_t1_all, mask_t1, it1, it, it_all, eps
 
     return f_t1, Phi_t1, Theta_t1, rho, Xs_t1, Ks_t1
 
-def _get_lmax(gauss_quad_order):
-    gnodes, _ = get_nodes_and_weights(gauss_quad_order)
-    lmax = np.max(gnodes)
-    return lmax
-
-def _get_epsmax(lmax, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks):
-    deriv = 0
-    order = 1
-    while np.isclose(deriv, 0):
-        order = order + 1
+def _get_lamb(t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks):
+    def grad(order):
         mask_nbh, it_nbh = ut.neighbourhood(it_all, len(t), N_neighbours=order)
         Xs_nbh, Ks_nbh = _get_Xs_t1_and_Ks_t1(Xs_t1_all, mask_nbh, S_t1, zs)
         eps_rho_nbh = _get_eps_rho(Xs_nbh, it_nbh, ranks[it])
         f_nbh, *_ = _get_eikonal_fields(t, Xs_nbh, Ks_nbh, J_t1_all, mask_nbh, it_nbh, it, it_all, eps_rho_nbh, A_rhos, Lambda_rhos, ranks)
-        deriv = fd.local_grad(f_nbh[:, np.newaxis].squeeze(), it_nbh, eps_rho_nbh.squeeze(), axes=[0], order=order)
+        return fd.local_grad(f_nbh[:, np.newaxis].squeeze(), it_nbh, eps_rho_nbh.squeeze(), axes=[0], order=order)
     
-    lamb = (1/(np.math.factorial(order)) * np.abs(deriv))**(-1/order)
-    epsmax = 3/2 * lamb * lmax
-    return epsmax, lamb
+    def Taylor_coeff(order):
+        deriv = grad(order)
+        return (1/(np.math.factorial(order)) * np.abs(deriv))**(1/order)
+    
+    n = 2
+    coeff_n = Taylor_coeff(n)
+    coeff_np1 = Taylor_coeff(n + 1)
+    while coeff_n < coeff_np1:
+        n = n + 1
+        coeff_n = coeff_np1
+        coeff_np1 = Taylor_coeff(n + 1)
+    
+    lamb = coeff_n**(-1)
 
-def _get_mask_t1(lmax, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks):
+    return lamb
+
+def _get_gauss_quad_order(max_nodes, lamb, epsmax):
+    gauss_quad_order = np.sum(lamb * max_nodes < epsmax)
+    if gauss_quad_order == 0:
+        gauss_quad_order = 1
+    return gauss_quad_order
+
+def _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks):
+    # Get mask for current branch
     mask_sgn = ut.sgn_mask_from_seed(J_t1_all, (it_all))
-    epstmp = _get_eps_rho(Xs_t1_all, it_all, ranks[it])
-    epsmax, lamb = _get_epsmax(lmax, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
-    mask_eps = np.abs(epstmp.squeeze()) < epsmax
+
+    # Get mask for range required for Gauss Freud Quadratures
+    eps_all = _get_eps_rho(Xs_t1_all, it_all, ranks[it])
+    max_extrapolation = _get_max_extrapolation(S_t1, zs, it_all, eps_all)
+    _lamb = _get_lamb(t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
+    epsmax = max_extrapolation * _get_max_abs(eps_all)
+    gauss_quad_order = _get_gauss_quad_order(max_nodes, _lamb, epsmax)
+    gnodes, _ = get_nodes_and_weights(gauss_quad_order)
+    lamb = min(_lamb, epsmax/gnodes[-1]) # ensure lambda * gnodes[-1] does not bring us out of the domain
+    mask_eps = np.abs(eps_all.squeeze()) < 1.1 * (lamb * gnodes[-1]) # only include points necessary for the Gaussian quadratures
+
+    # Combine masks
     mask_t1 = np.logical_and(mask_sgn, mask_eps)
-    return mask_t1, epsmax, lamb
+    return mask_t1, lamb, gauss_quad_order
 
 def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
         analytic_cont={'phase': {'fit_func': aaa, 'kwargs': {'mmax': 20}},
                        'amplitude': {'fit_func': aaa, 'kwargs': {'mmax': 20}}},
-        gauss_quad_order=10, max_extrapolation = 3/2):
+        max_gauss_quad_order=5):
     '''Returns branch_masks, ray_field, info
     '''
     check_rays(t, zs)
+    max_nodes = get_max_nodes(max_gauss_quad_order)
     nt = i_end - i_start
     ND = _get_ND(zs)
     xs = zs[..., :ND]
@@ -297,10 +327,8 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
     J = gradtau_z[:, :ND].squeeze()
     branch_masks, seeds, branch_ranges = get_branches(J)
     
-    lmax = _get_lmax(gauss_quad_order)
-
     for seed, branch_range in zip(seeds, branch_ranges):
-        sigma_p, sigma_m, l_p, l_m, s_p, s_m = np.array([None]), np.array([None]), np.array([None]), np.array([None]), np.array([None]), np.array([None])
+        sigma_p, sigma_m = np.array([None]), np.array([None])
 
         for it in branch_range:
             if ((it - branch_range.start) % 50) == 0:
@@ -309,8 +337,8 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
             it_all = i_start + it
             Xs_t1_all = (S_t1[:ND, :] @ zs[..., np.newaxis])
             J_t1_all = fd.grad(Xs_t1_all.squeeze(), t)
-
-            mask_t1, epsmax, lamb = _get_mask_t1(lmax, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
+            
+            mask_t1, lamb, gauss_quad_order = _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
             it1 = int(np.argwhere(t[mask_t1] == t[it_all]))
 
             Xs_t1, Ks_t1 = _get_Xs_t1_and_Ks_t1(Xs_t1_all, mask_t1, S_t1, zs)
@@ -320,18 +348,16 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
             f_fit = analytic_cont['phase']['fit_func'](eps_rho.squeeze(), f_t1.squeeze(), **analytic_cont['phase']['kwargs'])
             g_fit = analytic_cont['amplitude']['fit_func'](eps_rho.squeeze(), Phi_t1.squeeze(), **analytic_cont['amplitude']['kwargs'])
 
-            smin = (1/max_extrapolation * lmax/np.max(np.abs(eps_rho)))**2
-
             for l in range(rho):
-                ddf0 = fd.local_grad(f_t1, it1, eps_rho.squeeze(), axes=[l], order=2)
-                sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l] = get_angles_and_l_and_s(sigma_p[l], sigma_m[l], l_p[l], l_m[l], s_p[l], s_m[l], smin, ddf0, f_fit)
+                ddf0 = fd.local_grad(f_t1.squeeze(), it1, eps_rho.squeeze(), axes=[l], order=2)
+                sigma_p[l], sigma_m[l] = get_angles(sigma_p[l], sigma_m[l], lamb, f_fit, ddf0)
             
             if it in i_save:
-                saved_results.append({'t1': t[it_all], 'it': it, 'it_all': it_all, 'mask_t1': mask_t1, 'it1': it1, 'epsmax': epsmax, 'lamb': lamb,
+                saved_results.append({'t1': t[it_all], 'it': it, 'it_all': it_all, 'mask_t1': mask_t1, 'it1': it1, 'gauss_quad_order': gauss_quad_order, 'lamb': lamb,
                                 'Xs_t1_all': Xs_t1_all, 'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
-                                'sigma_p': np.copy(sigma_p), 'sigma_m': np.copy(sigma_m), 'l_p': np.copy(l_p), 'l_m': np.copy(l_m), 's_p': np.copy(s_p), 's_m': np.copy(s_m),
-                                'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit, 'ddf0': ddf0})
-            Upsilon[it] = integrate_osc_func(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], s_p[:rho], s_m[:rho], gauss_quad_order=gauss_quad_order)
+                                'sigma_p': np.copy(sigma_p), 'sigma_m': np.copy(sigma_m),
+                                'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit})
+            Upsilon[it] = integrate_osc_func(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], lamb, gauss_quad_order=gauss_quad_order)
 
     ray_field = Nt*Upsilon
     info = {'saved_results': saved_results,
