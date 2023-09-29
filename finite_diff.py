@@ -84,10 +84,10 @@ def grad(f, *args, axes=None, cropped_axes=[]):
         if axis not in cropped_axes:
             # make padding for calculating three-point difference
             # estimate for the beginning and end points.
-            f_pad = pad_right(pad_left(f, axis=axis), axis=axis)
+            f_pad = pad_right(pad_left(_f, axis=axis), axis=axis)
         else:
-            f_pad = f
-        slice_pad = np.s_[[slice(1, -1) if (j != axis and j in cropped_axes) else slice(None) for j in range(len(f.shape))]]
+            f_pad = _f
+        slice_pad = np.s_[[slice(1, -1) if (j != axis and j in cropped_axes) else slice(None) for j in range(len(_f.shape))]]
         f_pad = f_pad[(*slice_pad, )]
         
         # The derivative is then calculated
