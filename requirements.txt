@@ -11,3 +11,4 @@ scikit-learn
 scikit-image
 ipython
 ipykernel
+baryrat
