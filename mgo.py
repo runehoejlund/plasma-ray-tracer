@@ -354,7 +354,7 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
             
             if it in i_save:
                 saved_results.append({'t1': t[it_all], 'it': it, 'it_all': it_all, 'mask_t1': mask_t1, 'it1': it1, 'gauss_quad_order': gauss_quad_order, 'lamb': lamb,
-                                'Xs_t1_all': Xs_t1_all, 'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
+                                'S_t1': S_t1, 'Xs_t1_all': Xs_t1_all, 'Xs_t1': Xs_t1, 'Ks_t1': Ks_t1, 'eps_rho': eps_rho,
                                 'sigma_p': np.copy(sigma_p), 'sigma_m': np.copy(sigma_m),
                                 'f_t1': f_t1, 'f_fit': f_fit, 'Theta_t1': Theta_t1, 'Phi_t1': Phi_t1, 'g_fit': g_fit})
             Upsilon[it] = integrate_osc_func(f_fit, g_fit, sigma_p[:rho], sigma_m[:rho], lamb, gauss_quad_order=gauss_quad_order)
