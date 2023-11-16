@@ -4,42 +4,38 @@ import numpy as np
 from scipy.integrate import solve_ivp, cumulative_trapezoid
 from warnings import warn
 
-def get_boundary_events(r_min, r_max):
+def get_boundary_events(r_min, r_max, atol):
     events = []
 
     if (r_min is not None):
         def hit_min(t, q):
-            tol = 1e-4
-            return np.min(q[:3] - (r_min - tol))
+            return np.min(q[:3] - (r_min - atol))
         hit_min.terminal = True
         hit_min.direction = -1
         events.append(hit_min)
     
     if (r_max is not None):
         def hit_max(t, q):
-            tol = 1e-4
-            return np.min((r_max + tol) - q[:3])
+            return np.min((r_max + atol) - q[:3])
         hit_max.terminal = True
         hit_max.direction = -1
         events.append(hit_max)
     
     return events
 
-def get_boundary_events_1D(x_min, x_max):
+def get_boundary_events_1D(x_min, x_max, atol):
     events = []
 
     if (x_min is not None):
         def hit_min(t, q):
-            tol = 1e-4
-            return np.min(q[0] - (x_min - tol))
+            return np.min(q[0] - (x_min - atol))
         hit_min.terminal = True
         hit_min.direction = -1
         events.append(hit_min)
     
     if (x_max is not None):
         def hit_max(t, q):
-            tol = 1e-4
-            return np.min((x_max + tol) - q[0])
+            return np.min((x_max + atol) - q[0])
         hit_max.terminal = True
         hit_max.direction = -1
         events.append(hit_max)
@@ -65,7 +61,7 @@ def trace_ray(r0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, r_min=None, r
         
         return torch.hstack((RHS_r, RHS_k)).detach().numpy()
 
-    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(r_min, r_max), rtol=rtol, atol = (1e-3)*rtol)
+    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = np.linspace(tmin, tmax, tsteps), events=get_boundary_events(r_min, r_max, atol=(1e-3)*rtol), rtol=rtol, atol = (1e-3)*rtol)
     if not sol.success:
         warn(sol.message)
     return sol
@@ -108,7 +104,7 @@ def trace_ray_1D(x0, k0, omega0, tmin, tmax, D, D_args={}, rtol=1e-3, x_min=None
         return torch.hstack((RHS_x, RHS_k)).detach().numpy()
 
     t_eval = np.linspace(tmin, tmax, tsteps)
-    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = t_eval, events=get_boundary_events_1D(x_min, x_max), rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
+    sol = solve_ivp(f, [tmin, tmax], q0, t_eval = t_eval, events=get_boundary_events_1D(x_min, x_max, atol=(1e-3)*rtol), rtol=rtol, atol = (1e-3)*rtol, **solve_ivp_args)
     
     if not sol.success:
         warn(sol.message)
