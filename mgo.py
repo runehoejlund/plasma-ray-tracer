@@ -368,53 +368,41 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
             'ranks': ranks, 'A_zetas': A_zetas, 'A_rhos': A_rhos, 'Lambda_rhos': Lambda_rhos}
     return branch_masks, ray_field, info
 
-def interpolate_eikonal(x, field):
+def interpolate_eikonal(x, field, interpolation_args):
     phi = np.abs(field)
     theta = ut.continuous_angle(field)
-    r_phi = aaa(x, phi, mmax=20)
-    r_theta = aaa(x, theta, mmax=20)
+    r_phi = aaa(x, phi, **interpolation_args)
+    r_theta = aaa(x, theta, **interpolation_args)
     r = lambda x: r_phi(x) * np.exp(1j*r_theta(x))
     return r
 
-def get_mask_with_margin(mask):
-    margin_mask = np.logical_or(
-            np.diff((mask).astype(int), append=0) > 0,
-            np.diff((mask).astype(int), prepend=0) < 0
-            )
-    
-    return np.logical_or(mask, margin_mask)
-
-def get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method='linear'):
+def get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method='linear', interpolation_args={}):
     '''returns A0, interp_field needed to superpose ray fields satisfying boundary condition.
     interpolation_method must one of 'eikonal_baryrat', 'baryrat' for a barycentric rational interpolation
         or alternatively one of 'linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic',
         'previous' or 'next' to use scipy's interp1d interpolation function.
     '''
-    ND = xs.shape[-1]
-    in_regions = [get_covered_region(xs[i_start:i_end][get_mask_with_margin(mask)]) for mask in branch_masks]
-    
     if interpolation_method in ['linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic', 'previous', 'next']:
-        branches = [interp1d(xs[i_start:i_end][mask].squeeze(), ray_field[mask], kind=interpolation_method, bounds_error=False, fill_value='extrapolate') for mask in branch_masks]
+        branches = [interp1d(xs[i_start:i_end][mask].squeeze(), ray_field[mask], kind=interpolation_method, bounds_error=False, fill_value='extrapolate', **interpolation_args) for mask in branch_masks]
     elif interpolation_method == 'eikonal_baryrat':
-        branches = [interpolate_eikonal(xs[i_start:i_end][mask].squeeze(), ray_field[mask]) for mask in branch_masks]
+        branches = [interpolate_eikonal(xs[i_start:i_end][mask].squeeze(), ray_field[mask], interpolation_args=interpolation_args) for mask in branch_masks]
     elif interpolation_method == 'baryrat':
-        branches = [aaa(xs[i_start:i_end][mask].squeeze(), ray_field[mask], mmax=20) for mask in branch_masks]
+        branches = [aaa(xs[i_start:i_end][mask].squeeze(), ray_field[mask], **interpolation_args) for mask in branch_masks]
 
     def interp_field(x):
-        return sum(in_region(np.asarray(x).reshape(-1, ND)) * f(x) for in_region, f in zip(in_regions, branches))
+        return sum(f(x) for f in branches)
 
     A0 = phi0/interp_field(x0)
 
     return A0, interp_field
 
-def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field, i_start, i_end, interpolation_method='linear'):
+def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field, i_start, i_end, interpolation_method='linear', interpolation_args={}):
     '''returns interpolated function `field` 
         interpolation_method must one of 'eikonal_baryrat', 'baryrat' for a barycentric rational interpolation
         or alternatively one of 'linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic',
         'previous' or 'next' to use scipy's interp1d interpolation function.
         '''
-    
-    A0, interp_field = get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method=interpolation_method)
+    A0, interp_field = get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method=interpolation_method, interpolation_args=interpolation_args)
 
     def field(x):
         return A0 * interp_field(x)
