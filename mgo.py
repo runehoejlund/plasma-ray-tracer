@@ -222,13 +222,15 @@ def _get_SVD_projected_qtys(A_rhos, Lambda_rhos, Xs_t1, Ks_t1, ranks, it, it1):
     return rho, a_rho, Lambda_rho, Ks_rho
 
 def _get_max_abs(eps):
-    return min(np.max(eps[eps > 0]), np.max(-eps[eps < 0]))
+    return min(np.max(eps[eps > 0], initial=0), np.max(-eps[eps < 0], initial=0))
 
 def _get_max_extrapolation(S_t1, zs, it_all, eps_all):
     ND = _get_ND(zs)
     K = np.abs((S_t1[ND:, :] @ zs[it_all, :, np.newaxis]).squeeze())
     wavelength = 2*np.pi/K
     epsmax = _get_max_abs(eps_all)
+    if epsmax == 0:
+        print('epsmax is zero at it_all:', it_all)
     max_extrapolation = 1 + wavelength/(2*epsmax)
     return max_extrapolation
 
@@ -374,12 +376,23 @@ def interpolate_eikonal(x, field):
     r = lambda x: r_phi(x) * np.exp(1j*r_theta(x))
     return r
 
+def get_mask_with_margin(mask):
+    margin_mask = np.logical_or(
+            np.diff((mask).astype(int), append=0) > 0,
+            np.diff((mask).astype(int), prepend=0) < 0
+            )
+    
+    return np.logical_or(mask, margin_mask)
+
 def get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method='linear'):
     '''returns A0, interp_field needed to superpose ray fields satisfying boundary condition.
     interpolation_method must one of 'eikonal_baryrat', 'baryrat' for a barycentric rational interpolation
         or alternatively one of 'linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic',
         'previous' or 'next' to use scipy's interp1d interpolation function.
     '''
+    ND = xs.shape[-1]
+    in_regions = [get_covered_region(xs[i_start:i_end][get_mask_with_margin(mask)]) for mask in branch_masks]
+    
     if interpolation_method in ['linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic', 'previous', 'next']:
         branches = [interp1d(xs[i_start:i_end][mask].squeeze(), ray_field[mask], kind=interpolation_method, bounds_error=False, fill_value='extrapolate') for mask in branch_masks]
     elif interpolation_method == 'eikonal_baryrat':
@@ -388,15 +401,20 @@ def get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_fie
         branches = [aaa(xs[i_start:i_end][mask].squeeze(), ray_field[mask], mmax=20) for mask in branch_masks]
 
     def interp_field(x):
-        return sum(f(x) for f in branches)
+        return sum(in_region(np.asarray(x).reshape(-1, ND)) * f(x) for in_region, f in zip(in_regions, branches))
 
     A0 = phi0/interp_field(x0)
 
     return A0, interp_field
 
-def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field, i_start, i_end):
-    '''returns interpolated function `field` '''
-    A0, interp_field = get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field)
+def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field, i_start, i_end, interpolation_method='linear'):
+    '''returns interpolated function `field` 
+        interpolation_method must one of 'eikonal_baryrat', 'baryrat' for a barycentric rational interpolation
+        or alternatively one of 'linear', 'nearest', 'nearest-up', 'zero', 'slinear', 'quadratic', 'cubic',
+        'previous' or 'next' to use scipy's interp1d interpolation function.
+        '''
+    
+    A0, interp_field = get_A0_and_interpolation(phi0, x0, xs, i_start, i_end, branch_masks, ray_field, interpolation_method=interpolation_method)
 
     def field(x):
         return A0 * interp_field(x)
@@ -433,11 +451,11 @@ def get_go_field_3D(t, y0s, z0s, zs, phi0):
 
     return branch_masks, ray_field
 
-def get_covered_region(rs):
+def get_covered_region(rs, points_per_bin=2):
     '''returns `in_region` function which takes positions as input and returns boolean
     values indicating whether each position is covered by the rays with positions `rs`'''
     ND = rs.shape[-1]
-    bins = (*(s for s in rs.shape[:ND]), )
+    bins = (*(int(s/points_per_bin) for s in rs.shape[:ND]), )
     H, edges = np.histogramdd(rs.reshape(-1, ND), bins=bins)
     centers = [edge[:-1] + np.diff(edge)/2 for edge in edges]
     in_region = RegularGridInterpolator(tuple(centers), (H > 0).astype(int), method='nearest', fill_value=0, bounds_error=False)
