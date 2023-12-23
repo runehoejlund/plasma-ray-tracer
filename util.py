@@ -60,10 +60,18 @@ def continuous_angle(z, axis=0):
 # def continuous_sqrt(z, axis=0):
 #     return np.sqrt(np.abs(z)) * np.exp(1j*continuous_angle(z)/2)
 
-def continuous_angle_of_reals(x, axis=0):
+def sgn_diff(x, axis=0):
+    '''returns y: An array with sign of sign changes in x.
+        y is +1 whenever the sign of x changes from -1 to +1
+        and y is -1 whenever the sign of x changes from +1 to -1.
+        At all other places, where there is no sign change, y is 0.'''
     sgn = np.sign(x)
     sgn0 = np.take(sgn, 0, axis=axis)[np.newaxis, ...]
-    return np.angle(x) + 2*np.pi*np.cumsum(np.heaviside(np.diff(sgn, prepend=sgn0, axis=axis), 0), axis=axis)
+    y = np.sign(np.diff(sgn, prepend=sgn0, axis=axis))
+    return y
+
+def continuous_angle_of_reals(x, axis=0):
+    return np.angle(x) + 2*np.pi*np.cumsum(np.heaviside(sgn_diff(x, axis=axis), 0), axis=axis)
 
 def continuous_sqrt_of_reals(x, axis=0):
     return np.sqrt(np.abs(x)) * np.exp(1j*continuous_angle_of_reals(x, axis=axis)/2)
