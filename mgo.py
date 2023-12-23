@@ -409,6 +409,17 @@ def superpose_ray_fields(phi0, x0, xs, branch_masks, ray_field, i_start, i_end, 
     
     return field
 
+def cum_keller_maslov_index_1D(dxdt, dkdt):
+    '''returns cumulative Keller Maslov index for a 1D ray with derivatives dxdt and dkdt.
+    The Keller-Maslov index determines the amount of phase shift encountered at caustics.
+    In 1D the Keller-Maslov index is either +1 or -1 at each caustics depending on the sign
+    of dkdx leading up to the caustic. These +-1 values are accumulated with np.cumsum such
+    that the phase shift is carried along further down the ray.
+    '''
+    is_caustic = np.abs(ut.sgn_diff(dxdt))
+    keller_maslov = -ut.sgn_diff(dxdt * dkdt) * is_caustic
+    return np.cumsum(keller_maslov)
+
 def get_go_field_1D(t, zs, phi0, i_start, i_end):
     '''returns branch_masks, ray_field'''
     check_rays(t, zs)
@@ -417,10 +428,12 @@ def get_go_field_1D(t, zs, phi0, i_start, i_end):
     ks = zs[..., ND:]
 
     gradtau_x = fd.grad(xs.squeeze(), t)[i_start:i_end]
+    gradtau_k = fd.grad(ks.squeeze(), t)[i_start:i_end]
     J = gradtau_x.squeeze()
     branch_masks, seeds, branch_ranges = get_branches(J)
-    theta = cumulative_trapezoid(ks[i_start:i_end].squeeze()*gradtau_x.squeeze(), t[i_start:i_end], initial=0) + ut.continuous_angle_of_reals(J)
-    phi = phi0*ut.continuous_sqrt_of_reals(J[0]/J)
+    keller_maslov_shift = cum_keller_maslov_index_1D(gradtau_x, gradtau_k) * np.pi/2
+    theta = cumulative_trapezoid(ks[i_start:i_end].squeeze()*gradtau_x.squeeze(), t[i_start:i_end], initial=0) + keller_maslov_shift
+    phi = phi0 * np.sqrt(np.abs(J[0]/J))
     ray_field = phi * np.exp(1j*theta)
     return branch_masks, ray_field
 
