@@ -230,8 +230,10 @@ def _get_max_extrapolation(S_t1, zs, it_all, eps_all):
     wavelength = 2*np.pi/K
     epsmax = _get_max_abs(eps_all)
     if epsmax == 0:
-        print('epsmax is zero at it_all:', it_all)
-    max_extrapolation = 1 + wavelength/(2*epsmax)
+        print('epsmax is zero at it_all:', it_all, '\n')
+        max_extrapolation = 1
+    else:
+        max_extrapolation = 1 + wavelength/(2*epsmax)
     return max_extrapolation
 
 def _get_Xs_t1_and_Ks_t1(Xs_t1_all, mask_t1, S_t1, zs):
@@ -288,7 +290,7 @@ def _get_gauss_quad_order(max_nodes, lamb, epsmax):
         gauss_quad_order = 1
     return gauss_quad_order
 
-def _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks):
+def _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks, fixed_params):
     # Get mask for current branch
     mask_sgn = ut.sgn_mask_from_seed(J_t1_all, (it_all))
 
@@ -296,8 +298,14 @@ def _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos
     eps_all = _get_eps_rho(Xs_t1_all, it_all, ranks[it])
     max_extrapolation = _get_max_extrapolation(S_t1, zs, it_all, eps_all)
     _lamb = _get_lamb(t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
-    epsmax = max_extrapolation * _get_max_abs(eps_all)
-    gauss_quad_order = _get_gauss_quad_order(max_nodes, _lamb, epsmax)
+    if 'epsmax' in fixed_params:
+        epsmax = fixed_params['epsmax']
+    else:
+        epsmax = max_extrapolation * _get_max_abs(eps_all)
+    if 'gauss_quad_order' in fixed_params:
+        gauss_quad_order = fixed_params['gauss_quad_order']
+    else:
+        gauss_quad_order = _get_gauss_quad_order(max_nodes, _lamb, epsmax)
     gnodes, _ = get_nodes_and_weights(gauss_quad_order)
     lamb = min(_lamb, epsmax/gnodes[-1]) # ensure lambda * gnodes[-1] does not bring us out of the domain
     mask_eps = np.abs(eps_all.squeeze()) < 1.1 * (lamb * gnodes[-1]) # only include points necessary for the Gaussian quadratures
@@ -309,7 +317,8 @@ def _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos
 def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
         analytic_cont={'phase': {'fit_func': aaa, 'kwargs': {'mmax': 20}},
                        'amplitude': {'fit_func': aaa, 'kwargs': {'mmax': 20}}},
-        max_gauss_quad_order=5):
+        max_gauss_quad_order=5,
+        fixed_params={}):
     '''Returns branch_masks, ray_field, info
     '''
     check_rays(t, zs)
@@ -340,7 +349,7 @@ def get_mgo_field(t, zs, phi0, i_start, i_end, i_save=[],
             Xs_t1_all = (S_t1[:ND, :] @ zs[..., np.newaxis])
             J_t1_all = fd.grad(Xs_t1_all.squeeze(), t)
             
-            mask_t1, lamb, gauss_quad_order = _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks)
+            mask_t1, lamb, gauss_quad_order = _get_mask_t1(max_nodes, t, Xs_t1_all, S_t1, zs, J_t1_all, it, it_all, A_rhos, Lambda_rhos, ranks, fixed_params)
             it1 = int(np.argwhere(t[mask_t1] == t[it_all]))
 
             Xs_t1, Ks_t1 = _get_Xs_t1_and_Ks_t1(Xs_t1_all, mask_t1, S_t1, zs)
